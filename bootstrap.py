@@ -18,7 +18,7 @@ peers = []
 @app.route('/connect', methods=['POST'])
 def connect():
     data = request.get_json()
-    node_id = data.get('node_id')
+    node_id = data.get('node')
     if node_id and (node_id not in peers):
         # print the node id of peer shown in demo
         print(f"Connected peer: {node_id}")
@@ -34,4 +34,4 @@ def get_peers():
 # bootstrap server start
 
 if __name__ == '__main__':
-    app.run(port=5000) # run on port 5000
+    app.run(port=5000, host='0.0.0.0') # run on port 5000
