@@ -65,7 +65,7 @@ def discover_peers():
 
 @app.route("/")
 def home():
-    # Phase 1 roves the node process is up.
+    # Phase 1 proves the node process is up.
     return jsonify({"message": f"Node {node_id} is running!"})
 
 
