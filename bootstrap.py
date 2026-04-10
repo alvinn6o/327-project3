@@ -1,37 +1,31 @@
-# registry for nodes
-# accept peer connection with POST
-'''
-Store a list of known peers.
-Send and receive messages between nodes
+"""
+Bootstrap node: central registry for the P2P network.
+Nodes register once with POST /connect; GET /peers returns everyone who registered.
+"""
 
-Step 1: Implement Peer Registration (Modify node.py to allow peers to register using a POST request)
-Step 2: Enable Peer-to-Peer Messaging (Use a /message endpoint to send and receive messages)
-Step 3: Start Multiple Nodes
-Step 4: Send a Message Between Nodes
-'''
-from flask import Flask, request, jsonify
+from flask import Flask, jsonify, request
 
 app = Flask(__name__)
+# Order is stable for JSON output (sorted on read in get_peers / response from connect).
 peers = []
 
-# allow for peer connections
-@app.route('/connect', methods=['POST'])
+
+@app.route("/connect", methods=["POST"])
 def connect():
-    data = request.get_json()
-    node_id = data.get('node')
-    if node_id and (node_id not in peers):
-        # print the node id of peer shown in demo
-        print(f"Connected peer: {node_id}")
-        peers.append(node_id)
+    # Body: {"node": "http://hostname:5000"} — the node's public URL for other peers.
+    data = request.get_json() or {}
+    url = data.get("node")
+    if url and url not in peers:
+        print(f"Connected peer: {url}", flush=True)
+        peers.append(url)
+    return jsonify({"peers": sorted(peers)})
 
-    return jsonify({'peers': peers})
 
-# allow to get list of peers
-@app.route('/peers', methods=['GET'])
+@app.route("/peers", methods=["GET"])
 def get_peers():
-    return jsonify({'peers': peers})
+    return jsonify({"peers": sorted(peers)})
 
-# bootstrap server start
 
-if __name__ == '__main__':
-    app.run(port=5000, host='0.0.0.0') # run on port 5000
+if __name__ == "__main__":
+    # Listen on all interfaces so Docker can publish the port.
+    app.run(port=5000, host="0.0.0.0")

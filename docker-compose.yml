@@ -1,3 +1,55 @@
 # define 20 peer nodes and bootstrap server
 # communicate via container hostnames (http://node1:5000)
+networks:
+  p2p:
+
+services:
+  bootstrap:
+    image: bootstrap-node
+    build:
+      context: .
+      dockerfile: bootstrap.Dockerfile
+    ports:
+      - "5000:5000"
+    networks:
+      - p2p
+
+  node1:
+    image: p2p-node
+    build: .
+    container_name: node1
+    environment:
+      BOOTSTRAP_URL: http://bootstrap:5000
+      NODE_URL: http://node1:5000
+    ports:
+      - "5001:5000"
+    networks:
+      - p2p
+    depends_on:
+      - bootstrap
+
+  node2:
+    image: p2p-node
+    container_name: node2
+    environment:
+      BOOTSTRAP_URL: http://bootstrap:5000
+      NODE_URL: http://node2:5000
+    ports:
+      - "5002:5000"
+    networks:
+      - p2p
+    depends_on:
+      - bootstrap
+
+  # docker compose --profile many up -d --scale extra=40
+  extra:
+    profiles:
+      - many
+    image: p2p-node
+    environment:
+      BOOTSTRAP_URL: http://bootstrap:5000
+    networks:
+      - p2p
+    depends_on:
+      - bootstrap
 

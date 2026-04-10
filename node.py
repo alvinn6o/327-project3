@@ -1,95 +1,106 @@
-'''
-Step 1 complete (peer registry)
+"""
+P2P node: HTTP API for health check, peer registration, gossip, and messages.
+Set BOOTSTRAP_URL (e.g. http://bootstrap:5000) for Phase 3; omit for Phase 1 only.
+NODE_URL should match how other containers reach this node (Compose sets it explicitly).
+"""
 
-Step 2 /message endpoint to receive messages
-
-
-'''
-import requests
+import os
 import threading
 import time
-from flask import Flask, request, jsonify
 import uuid
-import os
+
+import requests
+from flask import Flask, jsonify, request
 
 app = Flask(__name__)
 node_id = str(uuid.uuid4())
+# Other peers' base URLs (e.g. http://node2:5000), used for gossip and returned by GET /peers.
 peers = set()
-NODE_PORT = int(os.environ.get('NODE_PORT', 5000))
-NODE_URL = os.environ.get('NODE_URL', f'http://localhost:{NODE_PORT}')
-bootstrap_url = os.environ.get('BOOTSTRAP_URL', 'http://localhost:5000')
 
-# Register with bootstrap node
-# Your code here
-# registration where node registers to bootstrap with its id and get peer list
-def boostrap_register():
+PORT = int(os.environ.get("PORT", "5000"))
+# How this node identifies itself to the bootstrap and to others; must be reachable on the Docker network.
+NODE_URL = os.environ.get("NODE_URL", f"http://localhost:{PORT}")
+bootstrap_url = os.environ.get("BOOTSTRAP_URL")
+
+
+def bootstrap_register():
+    # Register this node with the bootstrap; merge returned peer list into our set.
+    # Retry until the bootstrap is up (Compose may start nodes before bootstrap is ready).
     while True:
         try:
-            response = requests.post(f'{bootstrap_url}/connect', json={'node': NODE_URL}, timeout=3)
-            peer_list = response.json().get('peers', []) # boostrap register response
-            for peer in peer_list:
-                # don't add self
-                if peer != NODE_URL:
-                    peers.add(peer)
-            print(f"Registered with bootstrap. Known peers: {list(peers)}")
-            break  # success
+            r = requests.post(
+                f"{bootstrap_url}/connect", json={"node": NODE_URL}, timeout=5
+            )
+            for p in r.json().get("peers", []):
+                if p != NODE_URL:
+                    peers.add(p)
+            print(f"Registered with bootstrap. Known peers: {sorted(peers)}", flush=True)
+            break
         except requests.RequestException as e:
-            print(f"Bootstrap error ({e})")
-            time.sleep(5)  # retry for bootstrap
+            print(f"Bootstrap error ({e})", flush=True)
+            time.sleep(5)
 
-# Discover peers directly
-# Your code here
-# peer to peer discovery where node gets peer list from bootstrap and other peers
-# runs in a loop every 3 seconds so the node stays up to date
+
 def discover_peers():
+    # Periodically: refresh from bootstrap, then gossip — ask each known peer for their peer list.
     while True:
         time.sleep(3)
-
-        # ask bootstrap for the peer list
         try:
-            response = requests.get(f'{bootstrap_url}/peers', timeout=3) # get peer list from boostrap
-            peer_list = response.json().get('peers', [])
-            for peer in peer_list:
-                # don't add self
-                if peer != NODE_URL:
-                    peers.add(peer)
+            r = requests.get(f"{bootstrap_url}/peers", timeout=5)
+            for p in r.json().get("peers", []):
+                if p != NODE_URL:
+                    peers.add(p)
         except requests.RequestException:
             pass
-
-        # then ask each known peer for THEIR peer list (true P2P discovery)
+        # Copy so we don't iterate while peers may grow from other threads.
         for peer in list(peers):
             try:
-                response = requests.get(f'{peer}/peers', timeout=3)
-                peer_list = response.json().get('peers', [])
-                for p in peer_list:
+                r = requests.get(f"{peer}/peers", timeout=5)
+                for p in r.json().get("peers", []):
                     if p != NODE_URL:
                         peers.add(p)
             except requests.RequestException:
-                pass  # peer may be temporarily unreachable
+                pass
 
 
-# Receive and send messages
-# Your code here
-@app.route('/message', methods=['POST'])
+@app.route("/")
+def home():
+    # Phase 1 roves the node process is up.
+    return jsonify({"message": f"Node {node_id} is running!"})
+
+
+@app.route("/register", methods=["POST"])
+def register():
+    # Optional Phase 2: another node tells us its URL so we add it to peers without bootstrap.
+    data = request.get_json() or {}
+    p = data.get("peer") or data.get("url")
+    if p and p != NODE_URL:
+        peers.add(p)
+    return jsonify({"status": "ok"})
+
+
+@app.route("/message", methods=["POST"])
 def receive_message():
-    data = request.get_json()
-    sender = data.get('sender', 'unknown')
-    msg = data.get('msg', '')
+    # Body: {"sender": "...", "msg": "..."} — handout expects logs + {"status": "received"}
+    data = request.get_json() or {}
+    sender = data.get("sender", "unknown")
+    msg = data.get("msg", "")
+    print(f"Received message from {sender}: {msg}", flush=True)
+    return jsonify({"status": "received"})
 
-    print(f'Received message from {sender}: {msg}')
-    return jsonify({'node': NODE_URL, 'status': 'received'})
 
-# Provide peer list when requested
-# Your code here
-@app.route('/peers', methods=['GET'])
+@app.route("/peers", methods=["GET"])
 def get_peers():
-    return jsonify({'peers': list(peers)})
+    # Other nodes call this to merge our view into theirs
+    return jsonify({"peers": sorted(peers)})
 
-# daemon=True stops when the main process exits
-threading.Thread(target=boostrap_register, daemon=True).start()
-threading.Thread(target=discover_peers, daemon=True).start()
 
-if __name__ == '__main__':
-    print(f"Node {node_id}, port {NODE_PORT}")
-    app.run(host='0.0.0.0', port=NODE_PORT)
+if bootstrap_url:
+    # Daemon threads exit when the main process exits
+    threading.Thread(target=bootstrap_register, daemon=True).start()
+    threading.Thread(target=discover_peers, daemon=True).start()
 
+if __name__ == "__main__":
+    print(f"Node {node_id} at {NODE_URL} (listening :{PORT})", flush=True)
+    # 0.0.0.0 so Docker port mapping works.
+    app.run(host="0.0.0.0", port=PORT)
